@@ -1,10 +1,9 @@
 ﻿using System;
-using System.Diagnostics;
 using System.Threading.Tasks;
-using GitCredentialManager.UI.Commands;
-using GitCredentialManager.UI.Controls;
+using GitCredentialManager.UI.Windows.Commands;
+using GitCredentialManager.UI.Windows.Controls;
 
-namespace GitCredentialManager.UI
+namespace GitCredentialManager.UI.Windows
 {
     public static class Program
     {
@@ -12,7 +11,7 @@ namespace GitCredentialManager.UI
         {
             // Set the session id (sid) for the helper process, to be
             // used when TRACE2 tracing is enabled.
-            SidManager.CreateSid();
+            ProcessManager.CreateSid();
             using (var context = new CommandContext())
             using (var app = new HelperApplication(context))
             {
@@ -31,6 +30,7 @@ namespace GitCredentialManager.UI
                 app.RegisterCommand(new CredentialsCommandImpl(context));
                 app.RegisterCommand(new OAuthCommandImpl(context));
                 app.RegisterCommand(new DeviceCodeCommandImpl(context));
+                app.RegisterCommand(new DefaultAccountCommandImpl(context));
 
                 int exitCode = app.RunAsync(args)
                     .ConfigureAwait(false)

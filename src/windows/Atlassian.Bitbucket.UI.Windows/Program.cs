@@ -1,12 +1,12 @@
 ﻿using System;
-using System.Diagnostics;
 using System.Threading.Tasks;
-using Atlassian.Bitbucket.UI.Commands;
-using Atlassian.Bitbucket.UI.Controls;
+using Atlassian.Bitbucket.UI.Windows.Commands;
+using Atlassian.Bitbucket.UI.Windows.Controls;
 using GitCredentialManager;
 using GitCredentialManager.UI;
+using GitCredentialManager.UI.Windows;
 
-namespace Atlassian.Bitbucket.UI
+namespace Atlassian.Bitbucket.UI.Windows
 {
     public static class Program
     {
@@ -14,7 +14,7 @@ namespace Atlassian.Bitbucket.UI
         {
             // Set the session id (sid) for the helper process, to be
             // used when TRACE2 tracing is enabled.
-            SidManager.CreateSid();
+            ProcessManager.CreateSid();
             using (var context = new CommandContext())
             using (var app = new HelperApplication(context))
             {

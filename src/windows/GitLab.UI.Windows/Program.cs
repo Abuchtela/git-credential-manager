@@ -1,12 +1,12 @@
 ﻿using System;
-using System.Diagnostics;
 using System.Threading.Tasks;
-using GitLab.UI.Commands;
-using GitLab.UI.Controls;
 using GitCredentialManager;
 using GitCredentialManager.UI;
+using GitCredentialManager.UI.Windows;
+using GitLab.UI.Windows.Commands;
+using GitLab.UI.Windows.Controls;
 
-namespace GitLab.UI
+namespace GitLab.UI.Windows
 {
     public static class Program
     {
@@ -14,7 +14,7 @@ namespace GitLab.UI
         {
             // Set the session id (sid) for the helper process, to be
             // used when TRACE2 tracing is enabled.
-            SidManager.CreateSid();
+            ProcessManager.CreateSid();
             using (var context = new CommandContext())
             using (var app = new HelperApplication(context))
             {

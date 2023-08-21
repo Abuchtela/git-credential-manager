@@ -1,6 +1,3 @@
-using System;
-using System.Text.RegularExpressions;
-using GitCredentialManager.Tests.Objects;
 using Xunit;
 
 namespace GitCredentialManager.Tests;

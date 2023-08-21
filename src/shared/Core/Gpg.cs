@@ -15,15 +15,18 @@ namespace GitCredentialManager
         private readonly string _gpgPath;
         private readonly ISessionManager _sessionManager;
         private readonly IProcessManager _processManager;
+        private readonly ITrace2 _trace2;
 
-        public Gpg(string gpgPath, ISessionManager sessionManager, IProcessManager processManager)
+        public Gpg(string gpgPath, ISessionManager sessionManager, IProcessManager processManager, ITrace2 trace2)
         {
             EnsureArgument.NotNullOrWhiteSpace(gpgPath, nameof(gpgPath));
             EnsureArgument.NotNull(sessionManager, nameof(sessionManager));
+            EnsureArgument.NotNull(trace2, nameof(trace2));
 
             _gpgPath = gpgPath;
             _sessionManager = sessionManager;
             _processManager = processManager;
+            _trace2 = trace2;
         }
 
         public string DecryptFile(string path)
@@ -41,9 +44,9 @@ namespace GitCredentialManager
 
             using (var gpg = _processManager.CreateProcess(psi))
             {
-                if (gpg is null)
+                if (!gpg.Start(Trace2ProcessClass.Other))
                 {
-                    throw new Exception("Failed to start gpg.");
+                    throw new Trace2Exception(_trace2, "Failed to start gpg.");
                 }
 
                 gpg.WaitForExit();
@@ -52,7 +55,9 @@ namespace GitCredentialManager
                 {
                     string stdout = gpg.StandardOutput.ReadToEnd();
                     string stderr = gpg.StandardError.ReadToEnd();
-                    throw new Exception($"Failed to decrypt file '{path}' with gpg. exit={gpg.ExitCode}, out={stdout}, err={stderr}");
+                    var format = "Failed to decrypt file '{0}' with gpg. exit={1}, out={2}, err={3}";
+                    var message = string.Format(format, path, gpg.ExitCode, stdout, stderr);
+                    throw new Trace2Exception(_trace2, message, format);
                 }
 
                 return gpg.StandardOutput.ReadToEnd();
@@ -73,9 +78,9 @@ namespace GitCredentialManager
 
             using (var gpg = _processManager.CreateProcess(psi))
             {
-                if (gpg is null)
+                if (!gpg.Start(Trace2ProcessClass.Other))
                 {
-                    throw new Exception("Failed to start gpg.");
+                    throw new Trace2Exception(_trace2, "Failed to start gpg.");
                 }
 
                 gpg.StandardInput.Write(contents);
@@ -87,7 +92,9 @@ namespace GitCredentialManager
                 {
                     string stdout = gpg.StandardOutput.ReadToEnd();
                     string stderr = gpg.StandardError.ReadToEnd();
-                    throw new Exception($"Failed to encrypt file '{path}' with gpg. exit={gpg.ExitCode}, out={stdout}, err={stderr}");
+                    var format = "Failed to encrypt file '{0}' with gpg. exit={1}, out={2}, err={3}";
+                    var message = string.Format(format, path, gpg.ExitCode, stdout, stderr);
+                    throw new Trace2Exception(_trace2, message, format);
                 }
             }
         }

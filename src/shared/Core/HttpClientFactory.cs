@@ -76,6 +76,20 @@ namespace GitCredentialManager
                 handler = new HttpClientHandler();
             }
 
+            // Trace Git's chosen SSL/TLS backend
+            _trace.WriteLine($"Git's SSL/TLS backend is: {_settings.TlsBackend}");
+
+            // Mirror Git for Windows and only send client TLS certificates automatically if we're using
+            // the schannel backend _and_ the user has opted in to sending them.
+            if (_settings.TlsBackend == TlsBackend.Schannel &&
+                _settings.AutomaticallyUseClientCertificates)
+            {
+                _trace.WriteLine("Configured to automatically send TLS client certificates.");
+                handler.ClientCertificateOptions = ClientCertificateOption.Automatic;
+            }
+
+            // Configure server certificate verification and warn if we're bypassing validation
+
             // IsCertificateVerificationEnabled takes precedence over custom TLS cert verification
             if (!_settings.IsCertificateVerificationEnabled)
             {
@@ -101,7 +115,9 @@ namespace GitCredentialManager
                 // Throw exception if cert bundle file not found
                 if (!_fileSystem.FileExists(certBundlePath))
                 {
-                    throw new FileNotFoundException($"Custom certificate bundle not found at path: {certBundlePath}", certBundlePath);
+                    var format = "Custom certificate bundle not found at path: {0}";
+                    var message = string.Format(format, certBundlePath);
+                    throw new Trace2FileNotFoundException(_trace2, message, format, certBundlePath);
                 }
 
                 Func<X509Certificate2, X509Chain, SslPolicyErrors, bool> validationCallback = (cert, chain, errors) =>
@@ -179,6 +195,34 @@ namespace GitCredentialManager
 #else
                 handler.ServerCertificateCustomValidationCallback = (_, cert, chain, errors) => validationCallback(cert, chain, errors);
 #endif
+            }
+
+            // If CustomCookieFilePath is set, set Cookie header from cookie file, which is written by libcurl
+            if (!string.IsNullOrWhiteSpace(_settings.CustomCookieFilePath) && _fileSystem.FileExists(_settings.CustomCookieFilePath))
+            {
+                // get the filename from gitconfig
+                string cookieFilePath = _settings.CustomCookieFilePath;
+                _trace.WriteLine($"Custom cookie file has been enabled with {cookieFilePath}");
+
+                // get cookie from cookie file
+                string cookieFileContents = _fileSystem.ReadAllText(cookieFilePath);
+
+                var cookieParser = new CurlCookieParser(_trace);
+                var cookies = cookieParser.Parse(cookieFileContents);
+
+                // Set the cookie
+                var cookieContainer = new CookieContainer();
+                foreach (var cookie in cookies)
+                {
+                    var schema = cookie.Secure ? "https" : "http";
+                    var uri = new UriBuilder(schema, cookie.Domain.TrimStart('.')).Uri;
+                    cookieContainer.Add(uri, new Cookie(cookie.Name, cookie.Value));
+                }
+                handler.CookieContainer = cookieContainer;
+                handler.UseCookies = true;
+                
+                _trace.WriteLine("Configured to automatically send cookie header.");
+
             }
 
             var client = new HttpClient(handler);
@@ -266,8 +310,11 @@ namespace GitCredentialManager
                     }
                     catch (Exception ex)
                     {
-                        _trace.WriteLine("Failed to convert proxy bypass hosts to regular expressions; ignoring bypass list");
+                        var message =
+                            "Failed to convert proxy bypass hosts to regular expressions; ignoring bypass list";
+                        _trace.WriteLine(message);
                         _trace.WriteException(ex);
+                        _trace2.WriteError(message);
                         dict["bypass"] = "<< failed to convert >>";
                     }
                 }

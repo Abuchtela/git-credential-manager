@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using GitCredentialManager.Interop.Posix.Native;
 
@@ -20,6 +22,35 @@ namespace GitCredentialManager
             string clrVersion = GetClrVersion();
 
             return new PlatformInformation(osType, osVersion, cpuArch, clrVersion);
+        }
+
+        public static bool IsDevBox()
+        {
+            if (!IsWindows())
+            {
+                return false;
+            }
+
+#if NETFRAMEWORK
+            // Check for machine (HKLM) registry keys for Cloud PC indicators
+            // Note that the keys are only found in the 64-bit registry view
+            using (Microsoft.Win32.RegistryKey hklm64 = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry64))
+            using (Microsoft.Win32.RegistryKey w365Key = hklm64.OpenSubKey(Constants.WindowsRegistry.HKWindows365Path))
+            {
+                if (w365Key is null)
+                {
+                    // No Windows365 key exists
+                    return false;
+                }
+
+                object w365Value = w365Key.GetValue(Constants.WindowsRegistry.IsW365EnvironmentKeyName);
+                string partnerValue = w365Key.GetValue(Constants.WindowsRegistry.W365PartnerIdKeyName)?.ToString();
+
+                return w365Value is not null && Guid.TryParse(partnerValue, out Guid partnerId) && partnerId == Constants.DevBoxPartnerId;
+            }
+#else
+            return false;
+#endif
         }
 
         public static bool IsWindowsBrokerSupported()
@@ -320,52 +351,106 @@ namespace GitCredentialManager
             return "Unknown";
         }
 
+        private static string _linuxDistroVersion;
+
         private static string GetOSVersion(ITrace2 trace2)
         {
+            //
+            // Since .NET 5 we can use Environment.OSVersion because it was updated to
+            // return the correct version on Windows & macOS, rather than the manifested
+            // version for Windows or the kernel version for macOS.
+            // https://learn.microsoft.com/en-us/dotnet/core/compatibility/core-libraries/5.0/environment-osversion-returns-correct-version
+            //
+            // However, we still need to use the old method for Windows on .NET Framework
+            // and call into the Win32 API to get the correct version (regardless of app
+            // compatibility settings).
+#if NETFRAMEWORK
             if (IsWindows() && RtlGetVersionEx(out RTL_OSVERSIONINFOEX osvi) == 0)
             {
                 return $"{osvi.dwMajorVersion}.{osvi.dwMinorVersion} (build {osvi.dwBuildNumber})";
             }
-
-            if (IsMacOS())
+#endif
+            if (IsWindows() || IsMacOS())
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "/usr/bin/sw_vers",
-                    Arguments = "-productVersion",
-                    RedirectStandardOutput = true
-                };
-
-                using (var swvers = new ChildProcess(trace2, psi))
-                {
-                    swvers.Start(Trace2ProcessClass.Other);
-                    swvers.WaitForExit();
-
-                    if (swvers.ExitCode == 0)
-                    {
-                        return swvers.StandardOutput.ReadToEnd().Trim();
-                    }
-                }
+                return Environment.OSVersion.Version.ToString();
             }
 
             if (IsLinux())
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "uname",
-                    Arguments = "-a",
-                    RedirectStandardOutput = true
-                };
+                return _linuxDistroVersion ??= GetLinuxDistroVersion();
 
-                using (var uname = new ChildProcess(trace2, psi))
+                string GetLinuxDistroVersion()
                 {
-                    uname.Start(Trace2ProcessClass.Other);
-                    uname.Process.WaitForExit();
-
-                    if (uname.ExitCode == 0)
+                    // Let's first try to get the distribution information from /etc/os-release
+                    // (or /usr/lib/os-release) which is required in systemd distributions.
+                    // https://www.freedesktop.org/software/systemd/man/os-release.html
+                    foreach (string osReleasePath in new[] { "/etc/os-release", "/usr/lib/os-release" })
                     {
-                        return uname.StandardOutput.ReadToEnd().Trim();
+                        if (!File.Exists(osReleasePath))
+                        {
+                            continue;
+                        }
+
+                        var props = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        char[] split = { '=' };
+                        string[] lines = File.ReadAllLines(osReleasePath);
+                        foreach (string line in lines)
+                        {
+                            // Each line is a key="value" pair
+                            string[] kvp = line.Split(split, count: 2);
+                            if (kvp.Length != 2)
+                            {
+                                continue;
+                            }
+
+                            props[kvp[0]] = kvp[1].Trim('"');
+                        }
+
+                        // Try to get the PRETTY_NAME first which is a user-friendly description
+                        // including the distro name and version.
+                        if (props.TryGetValue("PRETTY_NAME", out string prettyName))
+                        {
+                            return prettyName;
+                        }
+
+                        // Fall-back to (NAME || ID) + (VERSION || VERSION_ID || VERSION_CODENAME)?
+                        if (props.TryGetValue("NAME", out string distro) ||
+                            props.TryGetValue("ID", out distro))
+                        {
+                            if (props.TryGetValue("VERSION", out string version) ||
+                                props.TryGetValue("VERSION_ID", out version) ||
+                                props.TryGetValue("VERSION_CODENAME", out version))
+                            {
+                                return $"{distro} {version}";
+                            }
+
+                            // Return just the distro name if we don't have a version
+                            return distro;
+                        }
                     }
+
+                    // If we couldn't get the distribution information from /etc/os-release
+                    // (for example if we're running on a non-systemd distribution), then let's
+                    // use `uname -a` to get at least some information.
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "uname",
+                        Arguments = "-a",
+                        RedirectStandardOutput = true
+                    };
+
+                    using (var uname = new ChildProcess(trace2, psi))
+                    {
+                        uname.Start(Trace2ProcessClass.Other);
+                        uname.Process.WaitForExit();
+
+                        if (uname.ExitCode == 0)
+                        {
+                            return uname.StandardOutput.ReadToEnd().Trim();
+                        }
+                    }
+
+                    return "Unknown-Linux";
                 }
             }
 
